@@ -36,18 +36,19 @@ def draw_health(screen, health, initial_health, ui_padding=10, ui_element_height
     draw_text(screen, health_text, 24, ui_padding * 2, ui_padding + (ui_element_height - health_text_size[1]) / 2,
               health_color, shadow=True)
 
-def draw_active_policy(screen, active_policy, policy_colors, ui_padding=10, ui_element_height=40):
+def draw_active_policy(screen, active_policy, policy_colors, ui_padding=10, ui_element_height=40, y_offset=0):
     if active_policy:
         policy_text = f"АКТИВЕН: {active_policy.upper()}"
         policy_font = get_font(20, 'Impact, Arial Black')
         policy_color = policy_colors.get(active_policy, WHITE)
         policy_text_size = policy_font.size(policy_text)
         policy_bg_rect = pygame.Rect(screen.get_width() / 2 - policy_text_size[0] / 2 - ui_padding,
-                                     ui_padding * 2 + ui_element_height, policy_text_size[0] + ui_padding * 2,
+                                     ui_padding * 2 + ui_element_height + y_offset,
+                                     policy_text_size[0] + ui_padding * 2,
                                      int(ui_element_height * 0.8))
         draw_rounded_rect(screen, policy_bg_rect, (*policy_color, 180), 6, alpha=200)
         draw_text(screen, policy_text, 20, screen.get_width() / 2,
-                  ui_padding * 2 + ui_element_height + (int(ui_element_height * 0.8) - policy_text_size[1]) / 2,
+                  ui_padding * 2 + ui_element_height + y_offset + (int(ui_element_height * 0.8) - policy_text_size[1]) / 2,
                   WHITE, font_name_hint='Impact, Arial Black', anchor="midtop", shadow=True, shadow_color=BLACK)
 
 def draw_toast(screen, message, end_time, alpha, current_time):

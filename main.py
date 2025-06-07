@@ -7,7 +7,7 @@ import math
 from config import *
 from sprites.player import Player
 from sprites.obstacles import Obstacle, Booster
-from sprites.background import BackgroundElement
+from sprites.background import BackgroundElement, WeatherSystem, draw_ground
 from utils.particles import create_explosion, apply_screen_shake, update_screen_shake
 from utils.ui import (draw_timer, draw_score, draw_health, draw_active_policy,
                      draw_toast, draw_game_over_screen)
@@ -25,7 +25,7 @@ def game():
     world_speed = INITIAL_SPEED
     score = 0
     health = INITIAL_HEALTH
-    active_policy = None
+    active_policies = []
     game_start_time = time.time()
     last_speed_up_time = game_start_time
     toast_message = None
@@ -42,12 +42,15 @@ def game():
 
     # Создание фоновых элементов
     background_elements = []
+    # Дальние здания (маленькие)
     for _ in range(10):
-        background_elements.append(BackgroundElement(LANE_YS[0] - 150, 100, 30, 80, BUILDING_COLORS, 0.2, 0))
+        background_elements.append(BackgroundElement(LANE_YS[0] * 0.55, 143, 30, 80, BUILDING_COLORS, 0.2, 0))
+    # Средние здания
     for _ in range(8):
-        background_elements.append(BackgroundElement(LANE_YS[0] - 80, 150, 40, 120, BUILDING_COLORS, 0.4, 1))
+        background_elements.append(BackgroundElement(LANE_YS[0] * 0.6, 176, 40, 120, BUILDING_COLORS, 0.4, 1))
+    # Ближние здания (большие)
     for _ in range(6):
-        background_elements.append(BackgroundElement(LANE_YS[0] - 20, 80, 50, 100, BUILDING_COLORS, 0.7, 2))
+        background_elements.append(BackgroundElement(LANE_YS[0] * 0.65, 187, 50, 100, BUILDING_COLORS, 0.7, 2))
 
     background_elements.sort(key=lambda el: el.z_order)
 
@@ -72,6 +75,9 @@ def game():
 
     game_state = "playing"
     running = True
+
+    # Создание погодной системы
+    weather_system = WeatherSystem()
 
     while running:
         dt = clock.tick(FPS) / 1000.0
@@ -159,12 +165,13 @@ def game():
 
             # Проверка коллизий с бустерами
             for booster in pygame.sprite.spritecollide(player, boosters_group, True):
-                active_policy = booster.policy_type
-                toast_message = f"{active_policy.upper()} АКТИВИРОВАН!"
-                toast_end_time = current_game_time + 2.0
-                toast_alpha = 255
-                particles.extend(create_explosion(booster.rect.centerx, booster.rect.centery,
-                                               POLICY_COLORS.get(booster.policy_type, GREEN), 30, 120, 0.6))
+                if booster.policy_type not in active_policies:
+                    active_policies.append(booster.policy_type)
+                    toast_message = f"{booster.policy_type.upper()} АКТИВИРОВАН!"
+                    toast_end_time = time.time() + 2.0
+                    toast_alpha = 255
+                    particles.extend(create_explosion(booster.rect.centerx, booster.rect.centery,
+                                                   POLICY_COLORS.get(booster.policy_type, GREEN), 30, 120, 0.6))
 
             # Проверка коллизий с препятствиями
             for obstacle in pygame.sprite.spritecollide(player, obstacles_group, True):
@@ -172,11 +179,11 @@ def game():
                 cost = RISK_COSTS.get(risk, 0)
                 protection = RISK_PROTECTION.get(risk)
 
-                if active_policy == protection:
+                if protection in active_policies:
                     score += cost
-                    active_policy = None
+                    active_policies.remove(protection)
                     toast_message = f"{protection.upper() if protection else ''} спас! Экономия: {cost:,}₽"
-                    toast_end_time = current_game_time + 2.5
+                    toast_end_time = time.time() + 2.5
                     toast_alpha = 255
                     particles.extend(create_explosion(obstacle.rect.centerx, obstacle.rect.centery, GREEN, 25, 100, 0.7))
                 else:
@@ -188,10 +195,10 @@ def game():
                     if risk not in shown_first_collision_tips:
                         toast_message = base_toast
                         shown_first_collision_tips.add(risk)
-                        toast_end_time = current_game_time + 3.5
+                        toast_end_time = time.time() + 3.5
                     else:
                         toast_message = f"Убыток! Бюджет -1"
-                        toast_end_time = current_game_time + 2.0
+                        toast_end_time = time.time() + 2.0
                     toast_alpha = 255
 
                 if health <= 0:
@@ -201,29 +208,96 @@ def game():
             if current_game_time - game_start_time >= GAME_DURATION_SEC and game_state == "playing":
                 game_state = "win"
 
+            # Обновление погоды
+            weather_system.update(dt)
+
         # Отрисовка
-        # Градиент неба
-        for y_grad in range(int(LANE_YS[0])):
-            ratio = y_grad / LANE_YS[0]
+        # Получаем текущие цвета неба из погодной системы
+        sky_color_top, sky_color_bottom = weather_system.get_current_sky_colors()
+        
+        # Вычисляем позицию дороги
+        road_rect_y = LANE_YS[0] - PLAYER_SIZE[1] * 0.8
+        
+        # Градиент неба (только до дороги)
+        for y_grad in range(int(road_rect_y)):
+            ratio = y_grad / road_rect_y
             color = (
-                int(SKY_COLOR_TOP[0] * (1 - ratio) + SKY_COLOR_BOTTOM[0] * ratio),
-                int(SKY_COLOR_TOP[1] * (1 - ratio) + SKY_COLOR_BOTTOM[1] * ratio),
-                int(SKY_COLOR_TOP[2] * (1 - ratio) + SKY_COLOR_BOTTOM[2] * ratio)
+                int(sky_color_top[0] * (1 - ratio) + sky_color_bottom[0] * ratio),
+                int(sky_color_top[1] * (1 - ratio) + sky_color_bottom[1] * ratio),
+                int(sky_color_top[2] * (1 - ratio) + sky_color_bottom[2] * ratio)
             )
             pygame.draw.line(screen, color, (0 + current_offset_x, y_grad + current_offset_y),
                            (SCREEN_WIDTH + current_offset_x, y_grad + current_offset_y))
 
-        # Звезды
-        for star in stars:
-            pygame.draw.circle(screen, WHITE, (int(star['x'] + current_offset_x), int(star['y'] + current_offset_y)),
-                             int(star['size']))
+        # Солнце (только если оно видимо в текущую погоду и нет перехода, и не рассвет)
+        current_weather = WEATHER_TYPES[weather_system.current_weather]
+        if weather_system.next_weather is None and current_weather["sun_visible"] and weather_system.current_weather != "sunrise":
+            # Вычисляем позицию солнца с учетом прогресса текущей погоды
+            base_sun_position = current_weather["sun_position"]
+            progress = weather_system.weather_timer / weather_system.weather_duration
+            if weather_system.current_weather == "clear":
+                arc_radius = SCREEN_WIDTH * 0.35
+                cx = SCREEN_WIDTH // 2
+                cy = road_rect_y * 0.8
+                theta = math.pi - progress * math.pi
+                sun_x = cx + arc_radius * math.cos(theta)
+                sun_y = cy - arc_radius * math.sin(theta)
+                sun_alpha = 255
+            elif weather_system.current_weather == "sunset":
+                if progress < 0.8:
+                    sun_x = SCREEN_WIDTH * 0.95
+                    sun_y = road_rect_y * 0.85
+                    sun_alpha = 255
+                else:
+                    final_progress = (progress - 0.8) / 0.2
+                    sun_x = SCREEN_WIDTH * 0.95
+                    sun_y = road_rect_y * (0.85 + final_progress * 0.15)
+                    sun_alpha = int(255 * (1 - final_progress))
+            else:
+                sun_x = SCREEN_WIDTH * 0.8
+                sun_y = road_rect_y * base_sun_position
+                sun_alpha = 255
+
+            sun_radius = 40
+            # Свечение
+            for r in range(int(sun_radius * 1.5), int(sun_radius * 0.8), -2):
+                alpha = int((255 * (1 - (r - sun_radius * 0.8) / (sun_radius * 0.7)) * sun_alpha) / 255)
+                alpha = max(0, min(255, alpha))
+                glow_surface = pygame.Surface((r * 2, r * 2), pygame.SRCALPHA)
+                pygame.draw.circle(glow_surface, (*YELLOW, alpha), (r, r), r)
+                screen.blit(glow_surface, 
+                          (sun_x - r + current_offset_x, 
+                           sun_y - r + current_offset_y))
+            # Само солнце (теперь с поддержкой альфы)
+            sun_surf_size = int(sun_radius * 1.6)
+            sun_alpha = max(0, min(255, sun_alpha))
+            sun_surface = pygame.Surface((sun_surf_size, sun_surf_size), pygame.SRCALPHA)
+            pygame.draw.circle(
+                sun_surface,
+                (*YELLOW, sun_alpha),
+                (sun_surf_size // 2, sun_surf_size // 2),
+                int(sun_radius * 0.8)
+            )
+            screen.blit(
+                sun_surface,
+                (int(sun_x + current_offset_x - sun_surf_size // 2), int(sun_y + current_offset_y - sun_surf_size // 2))
+            )
+
+        # Звезды (только если они видимы в текущую погоду)
+        if WEATHER_TYPES[weather_system.current_weather]["stars_visible"]:
+            for star in stars:
+                if star['y'] < road_rect_y:  # Рисуем звезды только в небе
+                    pygame.draw.circle(screen, WHITE, (int(star['x'] + current_offset_x), int(star['y'] + current_offset_y)),
+                                     int(star['size']))
+
+        # Земля (рисуем до зданий)
+        draw_ground(screen, current_offset_x, current_offset_y, weather_system)
 
         # Фоновые здания
         for bg_el in background_elements:
-            bg_el.draw(screen, current_offset_x, current_offset_y)
+            bg_el.draw(screen, current_offset_x, current_offset_y, weather_system)
 
         # Дорога
-        road_rect_y = LANE_YS[0] - PLAYER_SIZE[1] * 0.8
         pygame.draw.rect(screen, ROAD_COLOR, (
             0 + current_offset_x, road_rect_y + current_offset_y, SCREEN_WIDTH, SCREEN_HEIGHT - road_rect_y))
 
@@ -260,17 +334,24 @@ def game():
                 active_particles.append(p)
         particles = active_particles
 
+        # Погодные эффекты
+        weather_system.draw_weather(screen, current_offset_x, current_offset_y)
+
         # UI
         elapsed_time = time.time() - game_start_time
         time_left = max(0, GAME_DURATION_SEC - elapsed_time)
         draw_timer(screen, time_left)
         draw_score(screen, score)
         draw_health(screen, health, INITIAL_HEALTH)
-        draw_active_policy(screen, active_policy, POLICY_COLORS)
+        if active_policies:
+            y_offset = 0
+            for policy in active_policies:
+                draw_active_policy(screen, policy, POLICY_COLORS, ui_padding=10, ui_element_height=40, y_offset=y_offset)
+                y_offset += 45
         toast_alpha = draw_toast(screen, toast_message, toast_end_time, toast_alpha, time.time())
 
         if game_state in ["win", "game_over"]:
-            draw_game_over_screen(screen, game_state, score, SKY_COLOR_BOTTOM)
+            draw_game_over_screen(screen, game_state, score, sky_color_bottom)
 
         pygame.display.flip()
 

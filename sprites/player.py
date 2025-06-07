@@ -13,12 +13,17 @@ class Player(pygame.sprite.Sprite):
         self.image = pygame.Surface((self.base_width + self.image_buffer * 2, self.base_height + self.image_buffer * 2),
                                     pygame.SRCALPHA)
         self.rect = self.image.get_rect(midbottom=(PLAYER_START_X, LANE_YS[1]))
+        
+        # Создаем отдельный rect для коллизий, который всегда остается на полосе
+        self.collision_rect = self.rect.copy()
 
         self.current_lane_index = 1
         self.is_jumping = False
-        self.jump_power = -21
-        self.gravity = 0.95
+        self.jump_power = -30
+        self.gravity = 0.4
         self.y_velocity = 0
+        self.jump_offset = 0
+        self.can_collide = True
 
         self.base_y_on_lane = LANE_YS[self.current_lane_index]
         self.anim_y_offset = 0
@@ -106,58 +111,61 @@ class Player(pygame.sprite.Sprite):
 
     def update(self, dt):
         self.anim_timer += dt * 3.5
-
         tilt_speed_factor = dt * 10
         self.current_tilt += (self.target_tilt - self.current_tilt) * tilt_speed_factor
 
         if self.is_jumping:
-            self.target_tilt = 0
+            self.can_collide = False
             self.y_velocity += self.gravity
-            self.rect.y += self.y_velocity
+            self.jump_offset += self.y_velocity
 
-            if self.y_velocity < -1:
-                self.target_tilt = -12
-            elif self.y_velocity > 1:
-                self.target_tilt = 8
+            # Ограничиваем максимальную высоту прыжка
+            if self.jump_offset < -180:
+                self.jump_offset = -180
+                self.y_velocity = 0
 
-            if self.rect.bottom >= self.base_y_on_lane + self.anim_y_offset:
-                self.rect.bottom = self.base_y_on_lane + self.anim_y_offset
+            # Наклон во время прыжка
+            if self.y_velocity < 0:
+                self.target_tilt = -20
+            else:
+                self.target_tilt = 15
+
+            # Обновляем позицию относительно текущей полосы
+            self.rect.bottom = self.base_y_on_lane + self.jump_offset
+
+            # Проверяем приземление
+            if self.jump_offset >= 0:
+                self.jump_offset = 0
                 self.is_jumping = False
                 self.y_velocity = 0
                 self.target_tilt = 0
-
+                self.can_collide = True  # Включаем коллизии после приземления
                 return [Particle(
                     self.rect.centerx + random.uniform(-self.base_width / 2.5, self.base_width / 2.5),
                     self.rect.bottom,
                     (160, 160, 160), random.uniform(2.5, 5),
                     random.uniform(-50, 50), random.uniform(-60, -25), 280, 0.45
                 ) for _ in range(10)]
-            else:
-                self.jetpack_timer -= dt
-                if self.jetpack_timer <= 0:
-                    jet_angle_rad = math.radians(self.current_tilt + 90)
 
-                    nozzle_offset_x = self.base_width * 0.15 * math.cos(math.radians(self.current_tilt))
-                    nozzle_y_offset = self.base_width * 0.15 * math.sin(math.radians(self.current_tilt))
-
-                    particles = []
-                    for i in [-1, 1]:
-                        start_x = self.rect.centerx + i * nozzle_offset_x
-                        start_y = self.rect.bottom - self.image_buffer - nozzle_y_offset
-
-                        jet_speed = random.uniform(70, 100)
-                        p_speed_x = math.cos(jet_angle_rad) * jet_speed + random.uniform(-15, 15)
-                        p_speed_y = math.sin(jet_angle_rad) * jet_speed + random.uniform(-10, 10)
-
-                        particles.append(Particle(
-                            start_x, start_y,
-                            random.choice([(255, 100, 0), (255, 150, 30), (255, 200, 80)]), random.uniform(4, 7),
-                            p_speed_x, p_speed_y,
-                            -50, 0.3
-                        ))
-                    self.jetpack_timer = 0.02
-                    return particles
+            # Частицы джетпака
+            self.jetpack_timer -= dt
+            if self.jetpack_timer <= 0:
+                particles = []
+                for i in [-1, 1]:
+                    start_x = self.rect.centerx + i * (self.base_width * 0.2)
+                    start_y = self.rect.bottom - self.image_buffer
+                    particles.append(Particle(
+                        start_x, start_y,
+                        random.choice([(255, 100, 0), (255, 150, 30), (255, 200, 80)]),
+                        random.uniform(4, 7),
+                        random.uniform(-20, 20),
+                        random.uniform(50, 100),
+                        -50, 0.3
+                    ))
+                self.jetpack_timer = 0.02
+                return particles
         else:
+            self.can_collide = True  # Включаем коллизии в обычном состоянии
             self.anim_y_offset = math.sin(self.anim_timer) * 2.5
             self.rect.bottom = self.base_y_on_lane + self.anim_y_offset
             self.target_tilt = math.sin(self.anim_timer * 0.8) * 4
@@ -173,20 +181,25 @@ class Player(pygame.sprite.Sprite):
             if prev_lane_index != self.current_lane_index:
                 self.base_y_on_lane = LANE_YS[self.current_lane_index]
                 self.rect.bottom = self.base_y_on_lane + self.anim_y_offset
+                self.collision_rect.midbottom = (self.rect.centerx, self.base_y_on_lane)
                 self.target_tilt = direction * 18
 
     def jump(self):
         if not self.is_jumping:
             self.is_jumping = True
             self.y_velocity = self.jump_power
-            self.rect.y += self.y_velocity * 0.5
-            self.jetpack_timer = 0.03
-            self.target_tilt = -15
+            self.jump_offset = 0
+            self.jetpack_timer = 0.02
+            self.target_tilt = -20
+            self.can_collide = False  # Отключаем коллизии при начале прыжка
 
             return [Particle(
-                self.rect.centerx, self.rect.bottom - self.image_buffer,
-                random.choice([(255, 220, 120), (255, 250, 180), (255, 255, 0)]), random.uniform(3, 6),
-                random.uniform(-35, 35), random.uniform(60, 100),
-                -120, 0.55
-            ) for _ in range(15)]
+                self.rect.centerx + random.uniform(-10, 10),
+                self.rect.bottom - self.image_buffer,
+                random.choice([(255, 220, 120), (255, 250, 180), (255, 255, 0)]),
+                random.uniform(4, 8),
+                random.uniform(-40, 40),
+                random.uniform(70, 120),
+                -120, 0.6
+            ) for _ in range(20)]
         return [] 
